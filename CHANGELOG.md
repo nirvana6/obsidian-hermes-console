@@ -6,6 +6,8 @@ All notable changes to Hermes Console are documented here.
 
 ### New
 
+- Publish the active vault's bridge path to a vault-independent pointer file (`~/.config/hermes-console/bridge.json`), so a Hermes process that never inherited the PTY environment (gateway/service, container, remote backend, cron turn) still finds the right vault. Resolution order on the Hermes side: env var, pointer file, working-directory scan, legacy path.
+- Report why there is no Obsidian context: `obsidian_context()` now answers with `reason`, the resolved bridge path, its source, the paths that were checked, and a hint, instead of a bare `null`; the plugin also logs each new reason once.
 - Read selections made in Obsidian's PDF viewer as Hermes context, page number included (`PDF p.33 (51 words)` in the console header).
 - Add the `@pdf:` context reference on the Hermes side, so a prompt can pull a page range out of a vault PDF on demand (`@pdf:paper.pdf:84-86`, `@pdf:current:85-90`).
 
