@@ -232,6 +232,7 @@ Hermes reloads `.env` per turn, so `/reload` inside the session (or a new sessio
 
 ## Runtime behavior
 
+- The `obsidian_context()` tool answers with a JSON **string** (Hermes plugin tools must return strings, see `tools/registry.py::_normalize_handler_result`); parse it to read `context`, `reason`, `text` and the rest.
 - Missing or unreadable context bridge file: no context injected; `obsidian_context()` answers with a structured result instead of `null`:
   `{"context": null, "reason": "bridge_path_unset", "bridge_path": null, "bridge_source": null, "checked_paths": [...], "hint": "..."}`. Possible reasons: `no_turn_yet`, `bridge_path_unset`, `bridge_unreadable`, `bridge_not_an_object`, `payload_invalid`, `payload_stale`, `payload_older_than_accepted`, `payload_already_consumed`, `attach_disabled`, `no_context_in_payload`, `stale`. The plugin logs each new reason once, so a silent no-op shows up in the Hermes log.
 - `attach.enabled=false`: no context injected; previously accepted context is cleared. This is the default after plugin reload or Obsidian restart until the user enables the tab's **Send context to Hermes** header toggle or runs **Toggle note context for active Hermes Console tab**.
