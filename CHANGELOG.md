@@ -11,6 +11,10 @@ All notable changes to Hermes Console are documented here.
 - Read selections made in Obsidian's PDF viewer as Hermes context, page number included (`PDF p.33 (51 words)` in the console header).
 - Add the `@pdf:` context reference on the Hermes side, so a prompt can pull a page range out of a vault PDF on demand (`@pdf:paper.pdf:84-86`, `@pdf:current:85-90`).
 
+### Improvements
+
+- Add **Start on first keypress** (off by default): inject the startup command on the user's first keystroke in a fresh tab instead of on shell-ready or the 2 s fallback, so a tab that is opened and left untouched never launches Hermes — no boot cost and no empty "(Untitled)" session row left behind (#10).
+
 ## 1.1.16 - May 23, 2026
 
 ### Improvements
