@@ -13,7 +13,7 @@ import { openRestoreSessionPicker } from "./recent-sessions";
 import { resumeHermesSession } from "./hermes-sessions";
 import { notifyProtocolHandlerError, validateProtocolCwd } from "./uri-cwd";
 import type { SavedViewState } from "./session-state";
-import type { TerminalTabManager } from "./terminal-tab-manager";
+import { killOutstandingGracefulExits, type TerminalTabManager } from "./terminal-tab-manager";
 import { ObsidianContextTracker } from "./obsidian-context-bridge";
 import { getLeafForTerminalLocation } from "./terminal-opener";
 import {
@@ -232,6 +232,9 @@ export default class TerminalPlugin extends Plugin {
   }
 
   onunload(): void {
+    // Last-tab close detaches the view without killing grace children.
+    // Unload still has to signal them before Obsidian goes away.
+    killOutstandingGracefulExits();
     if (this.contextRefreshRaf !== null) {
       window.cancelAnimationFrame(this.contextRefreshRaf);
       this.contextRefreshRaf = null;

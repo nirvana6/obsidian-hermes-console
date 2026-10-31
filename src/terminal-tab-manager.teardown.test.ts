@@ -8,8 +8,9 @@ vi.hoisted(() => {
 import { CTRL_D, GRACEFUL_EXIT_GRACE_MS, GRACEFUL_EXIT_REFUSED_NOTICE, type UnixProcessInfo } from "./graceful-exit";
 import type { HermesHookExitStatus } from "./hermes-hook-status";
 import { DEFAULT_SETTINGS, type TerminalPluginSettings } from "./settings";
-import { TerminalTabManager, type TerminalSession } from "./terminal-tab-manager";
+import { killOutstandingGracefulExits, TerminalTabManager, type TerminalSession } from "./terminal-tab-manager";
 import { TerminalNoteContextState } from "./terminal-note-context-state";
+import { TerminalView } from "./terminal-view";
 
 const SHELL_PID = 100;
 const HERMES_PID = 200;
@@ -147,6 +148,34 @@ function makeManager(
   return manager;
 }
 
+/**
+ * The harness no-ops `onTabsEmpty`. Production wires it to `leaf.detach()`,
+ * and that detach's `TerminalView.onClose` calls `destroyAll` on the same stack.
+ */
+function wireViewDetach(manager: Harness): { tabManager: Harness | null } {
+  const view = Object.create(TerminalView.prototype) as {
+    onClose: () => Promise<void>;
+    tabManager: Harness | null;
+    resizeTimer: number | null;
+    resizeObserver: { disconnect(): void } | null;
+    verticalTabResizeCleanup: (() => void) | null;
+    originalLeafDetach: null;
+    leaf: { detach: () => void };
+  };
+  view.tabManager = manager;
+  view.resizeTimer = null;
+  view.resizeObserver = null;
+  view.verticalTabResizeCleanup = null;
+  view.originalLeafDetach = null;
+  view.leaf = {
+    detach() {
+      void view.onClose();
+    },
+  };
+  manager.onTabsEmpty = () => view.leaf.detach();
+  return view;
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   (globalThis as { window?: unknown }).window = {
@@ -161,6 +190,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  killOutstandingGracefulExits();
   vi.useRealTimers();
   delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { activeDocument?: unknown }).activeDocument;
@@ -376,6 +406,56 @@ describe("terminal teardown", () => {
     expect(second.written).toEqual([]);
     expect(first.killCount).toBe(1);
     expect(second.killCount).toBe(1);
+  });
+
+  it("last-tab close still honors the grace window when view onClose calls destroyAll", () => {
+    const pty = fakePty();
+    const session = makeSession("terminal-1", pty);
+    const manager = makeManager([session], { readProcess: foregroundHermes });
+    const view = wireViewDetach(manager);
+    manager.closeTab(session.id);
+    expect(view.tabManager).toBeNull();
+    expect(pty.written).toEqual([CTRL_D]);
+    expect(pty.killCount).toBe(0);
+    expect(manager.gracePending).toHaveLength(1);
+    vi.advanceTimersByTime(GRACEFUL_EXIT_GRACE_MS - 1);
+    expect(pty.killCount).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(pty.killCount).toBe(1);
+    expect(manager.gracePending).toEqual([]);
+  });
+
+  it("destructive kill of the last tab stays immediate when onClose calls destroyAll", () => {
+    const pty = fakePty();
+    const session = makeSession("terminal-1", pty);
+    const manager = makeManager([session], { readProcess: foregroundHermes, status: idleStatus() });
+    const view = wireViewDetach(manager);
+    (globalThis as { window: { prompt: (message?: string) => string | null } }).window.prompt = () => session.name;
+    manager.confirmAndKillTab(session.id);
+    expect(view.tabManager).toBeNull();
+    expect(pty.written).toEqual([]);
+    expect(pty.killCount).toBe(1);
+    expect(manager.gracePending).toEqual([]);
+    vi.advanceTimersByTime(GRACEFUL_EXIT_GRACE_MS);
+    expect(pty.killCount).toBe(1);
+  });
+
+  it("plugin unload kills a grace child left behind by the last-tab detach", () => {
+    const pty = fakePty();
+    const session = makeSession("terminal-1", pty);
+    const notices: string[] = [];
+    const manager = makeManager([session], { readProcess: foregroundHermes, notices });
+    const view = wireViewDetach(manager);
+    manager.closeTab(session.id);
+    expect(view.tabManager).toBeNull();
+    expect(pty.written).toEqual([CTRL_D]);
+    expect(pty.killCount).toBe(0);
+    killOutstandingGracefulExits();
+    expect(pty.killCount).toBe(1);
+    expect(manager.gracePending).toEqual([]);
+    vi.advanceTimersByTime(GRACEFUL_EXIT_GRACE_MS);
+    expect(pty.killCount).toBe(1);
+    expect(notices).toEqual([]);
   });
 
   it("destroyAll kills a Ctrl+D grace child synchronously so unload does not leave it alive", () => {

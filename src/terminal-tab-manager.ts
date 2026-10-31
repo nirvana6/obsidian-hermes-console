@@ -54,6 +54,15 @@ import {
 } from "./graceful-exit";
 import { getContextHeaderToggleState } from "./context-header-toggle-state";
 
+const graceManagers = new Set<TerminalTabManager>();
+
+/** Hard-kill every Ctrl+D grace child still running. Plugin unload calls this. */
+export function killOutstandingGracefulExits(): void {
+  for (const manager of [...graceManagers]) {
+    manager.killGracePendingNow();
+  }
+}
+
 const SEARCH_DECORATIONS = {
   matchBackground: "#ffff0050",
   matchBorder: "#ffff0090",
@@ -358,9 +367,16 @@ export class TerminalTabManager {
   private dragSrcId: string | null = null;
   /**
    * Tabs already removed from the bar whose Ctrl+D grace kill is still armed.
-   * destroyAll kills these synchronously so they cannot outlive Obsidian.
+   * Plugin unload kills these synchronously. A normal last-tab close does not:
+   * emptying the console detaches the view, and that onClose must leave the
+   * grace window running.
    */
   private gracePending: TerminalSession[] = [];
+  /**
+   * True only while `onTabsEmpty` from a normal tab close is on the stack.
+   * `destroyAll` during that detach must not hard-kill `gracePending`.
+   */
+  private deferGraceKill = false;
   private readonly app: App;
   private readonly hermesHookStatusDir: string;
 
@@ -1136,6 +1152,20 @@ export class TerminalTabManager {
   private dropPendingExit(session: TerminalSession): void {
     if (!this.gracePending) return;
     this.gracePending = this.gracePending.filter((pending) => pending !== session);
+    this.rememberGrace();
+  }
+
+  private rememberGrace(): void {
+    if (this.gracePending && this.gracePending.length > 0) graceManagers.add(this);
+    else graceManagers.delete(this);
+  }
+
+  /** Synchronous kill of Ctrl+D grace children. Used by unload, not by last-tab close. */
+  killGracePendingNow(): void {
+    if (!this.gracePending) this.gracePending = [];
+    const pending = this.gracePending.splice(0);
+    for (const session of pending) this.killPtyNow(session);
+    this.rememberGrace();
   }
 
   /** Synchronous kill. No-op once the process has exited or kill was requested. */
@@ -1234,6 +1264,7 @@ export class TerminalTabManager {
     }, GRACEFUL_EXIT_GRACE_MS);
     if (!this.gracePending) this.gracePending = [];
     this.gracePending.push(session);
+    this.rememberGrace();
   }
 
   /** PTY exit: cancel any grace kill, then remove the tab if it is still open. */
@@ -1312,7 +1343,14 @@ export class TerminalTabManager {
     }
 
     if (this.sessions.length === 0 && this.onTabsEmpty) {
-      this.onTabsEmpty();
+      // leaf.detach() → view onClose → destroyAll. Keep the grace window
+      // through that detach; unload and explicit kill do not set this flag.
+      this.deferGraceKill = true;
+      try {
+        this.onTabsEmpty();
+      } finally {
+        this.deferGraceKill = false;
+      }
       return;
     }
 
@@ -1372,18 +1410,20 @@ export class TerminalTabManager {
     const doc = (globalThis as { activeDocument?: { querySelector(selectors: string): { remove(): void } | null } }).activeDocument;
     doc?.querySelector(".terminal-tab-context-menu")?.remove();
     if (!this.gracePending) this.gracePending = [];
-    const pending = this.gracePending.splice(0);
+    // A normal last-tab close detaches the view, which lands here. Leave those
+    // grace timers armed. Unload and any other destroyAll still kill now.
+    const pending = this.deferGraceKill ? [] : this.gracePending.splice(0);
     for (const session of this.sessions) {
       if (saveToRecents && !session.removedFromTabs) {
         this.onSessionClose?.(this.captureSession(session));
       }
-      // Unload and view teardown stay synchronous. Children must not outlive
-      // Obsidian waiting on a Ctrl+D grace timer.
+      // Open tabs are still killed synchronously, including on unload.
       this.teardownSession(session, this.hasPtyExited(session) ? "exited" : "immediate");
     }
     for (const session of pending) {
       this.killPtyNow(session);
     }
+    this.rememberGrace();
     this.sessions = [];
     this.activeId = null;
     this.noteContextState.clear();

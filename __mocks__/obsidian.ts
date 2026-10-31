@@ -91,6 +91,19 @@ export class FuzzySuggestModal<T> {
 
 export class App {}
 
+export class ItemView {
+  app = new App();
+  leaf: unknown;
+  containerEl = {
+    children: [{}, { empty() {}, addClass() {} }],
+  };
+  constructor(leaf: unknown) {
+    this.leaf = leaf;
+  }
+}
+
+export class WorkspaceLeaf {}
+
 export const Platform = {
   isWin: false,
   isMac: false,
