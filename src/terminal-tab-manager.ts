@@ -7,6 +7,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
 import type { IDisposable } from "@xterm/xterm";
 import { PtyManager } from "./pty-manager";
+import { resolveFontFamily } from "./font-detect";
 import { isObsidianDark } from "./themes";
 import { mixHex } from "./color-utils";
 import { findTabColor, DEFAULT_TINT_STRENGTH, MAX_TINT_STRENGTH } from "./tab-colors";
@@ -656,7 +657,7 @@ export class TerminalTabManager {
   ): { terminal: Terminal; fitAddon: FitAddon; serializeAddon: SerializeAddon; searchAddon: SearchAddon } {
     const terminal = new Terminal({
       fontSize: this.settings.fontSize,
-      fontFamily: this.settings.fontFamily,
+      fontFamily: resolveFontFamily(this.settings.fontFamily),
       lineHeight: this.settings.lineHeight,
       cursorBlink: this.settings.cursorBlink,
       scrollback: this.settings.scrollback,

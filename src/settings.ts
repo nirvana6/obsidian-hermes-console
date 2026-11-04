@@ -22,6 +22,9 @@ export const MAX_VERTICAL_TAB_BAR_WIDTH = 360;
  */
 export type WikiLinkInsertMode = "wikilink" | "vault-path" | "absolute-path";
 
+/** The shipped default stack; also the fallback when font auto-detection finds nothing. */
+export const DEFAULT_FONT_FAMILY = "Menlo, Monaco, 'Courier New', monospace";
+
 export interface TerminalPluginSettings {
   shellPath: string;
   startupCommand: string;
@@ -68,7 +71,7 @@ export const DEFAULT_SETTINGS: TerminalPluginSettings = {
   startupCommand: "hermes",
   startupOnFirstKey: false,
   fontSize: 14,
-  fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+  fontFamily: DEFAULT_FONT_FAMILY,
   lineHeight: 1.0,
   theme: "obsidian-dark",
   backgroundColor: "",
@@ -578,6 +581,10 @@ export class TerminalSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Font family")
+      .setDesc(
+        "Applies to new terminal tabs. Leaving the shipped default (or empty) " +
+          "auto-detects an installed terminal font, preferring Nerd Font Mono faces.",
+      )
       .addText((text) =>
         text
           .setValue(this.plugin.settings.fontFamily)
