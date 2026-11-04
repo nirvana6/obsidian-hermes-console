@@ -68,6 +68,36 @@ function joinPath(...parts: string[]): string {
   return path.join(...parts);
 }
 
+/**
+ * zsh's compinit aborts ("compinit:201: bad pattern") when ZDOTDIR points at a
+ * directory whose path contains non-ASCII bytes, and the aborted compinit is
+ * what defines `compdef` — every completion framework downstream then fails
+ * with "command not found: compdef". There is no one-line .zshrc workaround:
+ * the path is already on the call stack once the files are sourced. Keeping the
+ * integration scripts on an ASCII path is the only reliable fix.
+ */
+export function containsNonAscii(value: string): boolean {
+  return /[^\x00-\x7F]/.test(value);
+}
+
+/**
+ * Pick an ASCII-safe directory outside the vault where shell-integration
+ * scripts can live even when the vault path is not ASCII. Returns null when
+ * no candidate is ASCII-safe (degrades to the in-vault directory).
+ */
+export function resolveAsciiIntegrationDir(home: string, tmp: string): string | null {
+  // POSIX separators on purpose: this only runs on the zsh branch (macOS/Linux)
+  // and must not depend on window.require so it stays a pure, testable function.
+  const candidates = [
+    `${home}/.local/share/hermes-console/shell-integration`,
+    `${tmp}/hermes-console/shell-integration`,
+  ];
+  for (const dir of candidates) {
+    if (dir && !containsNonAscii(dir)) return dir;
+  }
+  return null;
+}
+
 /** Write a script to disk if it doesn't exist or has changed. */
 function ensureScript(dir: string, filename: string, content: string): string {
   // Direct Node fs access is intentional here: shell integration needs actual
@@ -116,18 +146,28 @@ export function getShellIntegration(
 
   // macOS / Linux
   if (lower.includes("zsh") || lower.endsWith("/zsh")) {
-    const initFile = ensureScript(scriptDir, "zsh-init.zsh", ZSH_SCRIPT);
+    // When the plugin directory (inside the vault) is not ASCII-safe, keep the
+    // integration scripts on an ASCII path instead — see containsNonAscii().
+    // Focus the mirror on zsh only: bash has no compinit and tolerates
+    // non-ASCII BASH_ENV paths.
+    let integrationDir = scriptDir;
+    if (containsNonAscii(scriptDir)) {
+      const os = window.require("os") as typeof import("os");
+      const asciiDir = resolveAsciiIntegrationDir(os.homedir(), os.tmpdir());
+      if (asciiDir) integrationDir = asciiDir;
+    }
+    const initFile = ensureScript(integrationDir, "zsh-init.zsh", ZSH_SCRIPT);
     // Use the user's ZDOTDIR if set; otherwise let zsh resolve $HOME at runtime.
     // Passing an empty __LOT_USER_ZDOTDIR lets ZSH_SCRIPT's elif branch source $HOME/.zshrc.
     const customZdotdir = process.env.ZDOTDIR;
     const scriptZdotdir = customZdotdir || "${HOME}";
-    ensureScript(scriptDir, ".zshenv",   `[[ -f "${scriptZdotdir}/.zshenv"   ]] && source "${scriptZdotdir}/.zshenv"\n`);
-    ensureScript(scriptDir, ".zprofile", `[[ -f "${scriptZdotdir}/.zprofile" ]] && source "${scriptZdotdir}/.zprofile"\n`);
-    ensureScript(scriptDir, ".zshrc",    `source "${initFile}"\n`);
+    ensureScript(integrationDir, ".zshenv",   `[[ -f "${scriptZdotdir}/.zshenv"   ]] && source "${scriptZdotdir}/.zshenv"\n`);
+    ensureScript(integrationDir, ".zprofile", `[[ -f "${scriptZdotdir}/.zprofile" ]] && source "${scriptZdotdir}/.zprofile"\n`);
+    ensureScript(integrationDir, ".zshrc",    `source "${initFile}"\n`);
     return {
       env: {
         __LOT_USER_ZDOTDIR: customZdotdir ?? "",
-        ZDOTDIR: scriptDir,
+        ZDOTDIR: integrationDir,
       },
       args: [],
     };
